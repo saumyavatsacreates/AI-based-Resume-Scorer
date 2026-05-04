@@ -1,0 +1,1894 @@
+{
+  "name": "AI Resume Evaluator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "e3686ec7-fbba-4461-b4de-27f5d455454c",
+      "name": "Schedule: Refresh JD Cache",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -5136,
+        504
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Evaluations",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "File ID",
+              "lookupValue": "={{ $json.id || $json.fileId }}"
+            }
+          ]
+        },
+        "options": {
+          "returnAllMatches": "returnFirstMatch"
+        }
+      },
+      "id": "630c0a03-d71c-46a8-94f7-a73fd1c539d2",
+      "name": "Check: Already Scored?",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -5584,
+        312
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TlquvcD2o2GFmtbb",
+          "name": "Sheets - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_new_file",
+              "leftValue": "={{ $json['File ID'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e4601285-3a38-47fb-b9c4-30493bb238d3",
+      "name": "IF: New File?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -5136,
+        312
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_jd_changed",
+              "leftValue": "={{ $('Extract JD File Meta').first().json.modifiedTime }}",
+              "rightValue": "={{ $json.cachedJdModifiedTime }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9256468-3697-4ecd-9c90-93776c7a4b0d",
+      "name": "IF: JD Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -4016,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst jdMeta = $('Extract JD File Meta').first().json;\n// Read plain text exported from Google Drive\nstaticData.jdText = $input.first().json.body;\nstaticData.jdFileId = jdMeta.id;\nstaticData.jdFileName = jdMeta.name;\nstaticData.cachedJdModifiedTime = jdMeta.modifiedTime;\n\nreturn [{ json: { cached: true, jdFileId: staticData.jdFileId, jdLength: staticData.jdText.length } }];"
+      },
+      "id": "a86dc0ad-9e7c-48a9-a2ce-2e9256ac4fe0",
+      "name": "Cache JD Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2896,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Works for both Drive-trigger and Form-submission paths\n// fileId/fileName are normalised by the path-specific nodes upstream\n//const text = $json.body || '';\nconst text = $input.first().json.body || '';\n\n// Pull file identity \u2014 form path sets these directly; drive path uses Watch Resumes Folder\nconst fileId   = $input.first().json.fileId   || $('Watch Resumes Folder').first()?.json?.id   || 'unknown';\nconst fileName = $input.first().json.fileName || $('Watch Resumes Folder').first()?.json?.name || 'unknown';\nconst candidateName   = $input.first().json.candidateName   || '';\nconst candidateEmail  = $input.first().json.candidateEmail  || '';\nconst candidateMobile = $input.first().json.candidateMobile || '';\n\nconst wordCount = text.split(/\\s+/).filter(w => w.length > 0).length;\n\nif (!text || text.length < 100) {\n  return [{ json: {\n    status: 'scanned_image', fileId, fileName,\n    candidateName, candidateEmail, candidateMobile,\n    resumeText: '', wordCount: 0, valid: false,\n    reason: 'Could not extract text. Resume may be an image scan or corrupted.'\n  }}];\n}\n\nconst truncated = text.length > 32000\n  ? text.substring(0, 32000) + '\\n[TRUNCATED]'\n  : text;\n\nreturn [{ json: {\n  status: 'ready', fileId, fileName,\n  candidateName, candidateEmail, candidateMobile,\n  resumeText: truncated, wordCount, valid: true\n} }];\nlet formMeta = {};\ntry { formMeta = $('Normalise Form \u2192 Pipeline').first().json; } catch(e) {}\n\nreturn [{ json: {\n  body: text,\n  fileId:          formMeta.fileId   || '',\n  fileName:        formMeta.fileName || '',\n  candidateName:   formMeta.candidateName   || '',\n  candidateEmail:  formMeta.candidateEmail  || '',\n  candidateMobile: formMeta.candidateMobile || ''\n} }];"
+      },
+      "id": "2f9b618c-d12e-4d0a-8d99-8abab4d6e46a",
+      "name": "Validate Resume Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_valid_text",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "caa84493-7bbe-4f52-a395-6b99b82ce6c4",
+      "name": "IF: Text Extractable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -1552,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "cond_scored_ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "scored",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f5e1727b-1059-4503-930e-77ad021212e7",
+      "name": "IF: Scored Successfully?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -208,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "=1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "AuditLog",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ new Date().toISOString() }}",
+            "File ID": "={{ $json.fileId || $json.id || 'unknown' }}",
+            "File Name": "={{ $json.fileName || $json.name || 'unknown' }}",
+            "Status": "={{ $json.status }}",
+            "Score": "={{ $json.relevanceScore || 'N/A' }}",
+            "Notes": "={{ $json.reason || $json.error || '' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "97e28248-8950-4b9e-b3e6-e35a029532f5",
+      "name": "Write to Audit Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        552
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jo1CK1KF30XTlpiS",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "=1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Evaluations",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ new Date().toISOString() }}",
+            "Candidate Name": "=MANUAL REVIEW REQUIRED",
+            "Score": "=ERROR",
+            "Tier": "=ERROR",
+            "File ID": "={{ $json.fileId || $json.id }}",
+            "File Name": "={{ $json.fileName || $json.name }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "dec82510-4b73-4432-80b8-34614363aee1",
+      "name": "Flag Error Row in Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        16,
+        552
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jo1CK1KF30XTlpiS",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "errorMessage": "Resume evaluation workflow error \u2014 check Audit Log sheet for details"
+      },
+      "id": "c9e14b28-510c-4af2-844d-5acfe5765556",
+      "name": "Stop and Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        464,
+        552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rate limiter \u2014 enforce max 5 Claude API calls per minute\n// Uses workflow static data to track call timestamps\nconst staticData = $getWorkflowStaticData('global');\nconst now = Date.now();\nconst windowMs = 60 * 1000; // 1 minute\nconst maxCalls = 5;\n\n// Clean up calls older than 1 minute\nif (!staticData.apiCallLog) staticData.apiCallLog = [];\nstaticData.apiCallLog = staticData.apiCallLog.filter(t => (now - t) < windowMs);\n\nif (staticData.apiCallLog.length >= maxCalls) {\n  const oldestCall = staticData.apiCallLog[0];\n  const waitMs = windowMs - (now - oldestCall) + 100;\n  // Can't actually sleep in Code node \u2014 log the situation\n  // In production, use a Wait node after this with a webhook resume\n  return [{ json: {\n    rateLimited: true,\n    callsInWindow: staticData.apiCallLog.length,\n    suggestedWaitMs: waitMs,\n    ...$json\n  }}];\n}\n\nstaticData.apiCallLog.push(now);\nreturn [{ json: { rateLimited: false, callsInWindow: staticData.apiCallLog.length, ...$json } }];"
+      },
+      "id": "ad67e224-f100-4c2e-921a-a4f928501d93",
+      "name": "Rate Limiter (5/min)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "f5381902-4d6e-4d70-9f91-f8873616f871",
+      "name": "Wait 2s (API Courtesy)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -880,
+        120
+      ],
+      "webhookId": "resume-eval-wait"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all inputs \u2014 ensure we pass through with correct data\nconst items = $input.all();\nreturn items;"
+      },
+      "id": "8c87cc40-a45c-44b4-8307-e98b69c41f9d",
+      "name": "Skip (Already Scored)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4912,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Generate a compact skill fingerprint for the JD using cosine-ready term frequency\n// Uses static data so it only recomputes when JD changes (same cache gate as before)\nconst staticData = $getWorkflowStaticData('global');\nconst jdText = staticData.jdText || '';\n\n// Skill ontology clusters \u2014 extend freely\nconst SKILL_CLUSTERS = {\n  'ml_ai':      ['machine learning','ml','deep learning','neural network','nlp','llm','transformer','pytorch','tensorflow','scikit','huggingface','langchain','rag','vector'],\n  'data':       ['sql','pandas','spark','dbt','airflow','etl','data pipeline','warehouse','bigquery','redshift','snowflake','looker','tableau','power bi','datalake'],\n  'backend':    ['python','java','node','golang','rust','api','rest','graphql','microservices','kafka','rabbitmq','redis','postgresql','mysql','mongodb'],\n  'frontend':   ['react','angular','vue','typescript','javascript','css','html','next.js','tailwind','figma','ux','ui'],\n  'cloud_devops':['aws','gcp','azure','kubernetes','docker','terraform','ci/cd','jenkins','github actions','sre','devops','observability'],\n  'product_ba': ['product management','product roadmap','user stories','stakeholder','business analysis','brd','prd','agile','scrum','jira','figma','wireframe'],\n  'consulting': ['strategy','transformation','change management','client engagement','proposal','rfp','presentation','c-suite','executive'],\n  'finance':    ['financial modelling','valuation','p&l','forecasting','budget','excel','vba','accounting','cfa','risk'],\n};\n\nconst jdLower = jdText.toLowerCase();\n\n// Score each cluster\nconst clusterScores = {};\nfor (const [cluster, terms] of Object.entries(SKILL_CLUSTERS)) {\n  let hits = 0;\n  for (const t of terms) {\n    const regex = new RegExp('\\\\b' + t.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\\\\\$&') + '\\\\b', 'gi');\n    const matches = jdLower.match(regex);\n    hits += matches ? matches.length : 0;\n  }\n  clusterScores[cluster] = hits;\n}\n\n// Identify top required clusters (hits > 0)\nconst requiredClusters = Object.entries(clusterScores)\n  .filter(([,v]) => v > 0)\n  .sort((a,b) => b[1]-a[1])\n  .map(([k]) => k);\n\n// Also extract raw required keywords (top 30 by freq)\nconst words = jdLower.match(/\\b[a-z][a-z0-9+#\\-.]{2,}\\b/g) || [];\nconst freq = {};\nconst STOP = new Set(['and','the','for','with','that','this','are','from','you','will','have','your','our','they','their','has','been','can','job','role','work','using','include','required','preferred','experience','skills','ability','strong','knowledge','good','years','team','cross','other','also','well','all','any','both','each','must','should','may','more','most','some','such','than','then','when','where','who','why','how']);\nfor (const w of words) { if (!STOP.has(w)) freq[w] = (freq[w]||0)+1; }\nconst topKeywords = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,30).map(([k])=>k);\n\n// Store in static data for resume scoring\nstaticData.jdClusterScores = clusterScores;\nstaticData.jdRequiredClusters = requiredClusters;\nstaticData.jdTopKeywords = topKeywords;\n\nreturn [{ json: { \n  jdClusters: clusterScores, \n  requiredClusters,\n  topKeywords,\n  jdLength: jdText.length\n}}];\n"
+      },
+      "id": "4f5562ba-1e4c-4c03-a7bd-46652fcdf887",
+      "name": "Embed JD \u2014 Skill Clusters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2672,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst staticData = $getWorkflowStaticData('global');\nconst jdText = staticData.jdText || 'JD NOT CACHED';\nconst jdClusters = staticData.jdClusterScores || {};\nconst requiredClusters = staticData.jdRequiredClusters || [];\nconst jdKeywords = staticData.jdTopKeywords || [];\nconst resumeText = $json.resumeText;\nconst fileName = $json.fileName;\nconst wordCount = $json.wordCount;\n\n// \u2500\u2500\u2500 LAYER 1: RULE-BASED SCORING \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Skill ontology (same clusters)\nconst SKILL_CLUSTERS = {\n  'ml_ai':      ['machine learning','ml','deep learning','neural network','nlp','llm','transformer','pytorch','tensorflow','scikit','huggingface','langchain','rag','vector'],\n  'data':       ['sql','pandas','spark','dbt','airflow','etl','data pipeline','warehouse','bigquery','redshift','snowflake','looker','tableau','power bi','datalake'],\n  'backend':    ['python','java','node','golang','rust','api','rest','graphql','microservices','kafka','rabbitmq','redis','postgresql','mysql','mongodb'],\n  'frontend':   ['react','angular','vue','typescript','javascript','css','html','next.js','tailwind','figma','ux','ui'],\n  'cloud_devops':['aws','gcp','azure','kubernetes','docker','terraform','ci/cd','jenkins','github actions','sre','devops','observability'],\n  'product_ba': ['product management','product roadmap','user stories','stakeholder','business analysis','brd','prd','agile','scrum','jira','figma','wireframe'],\n  'consulting': ['strategy','transformation','change management','client engagement','proposal','rfp','presentation','c-suite','executive'],\n  'finance':    ['financial modelling','valuation','p&l','forecasting','budget','excel','vba','accounting','cfa','risk'],\n};\n\nconst resumeLower = resumeText.toLowerCase();\n\n// Semantic cluster match (cosine-inspired: dot product of TF vectors)\nconst resumeClusterScores = {};\nfor (const [cluster, terms] of Object.entries(SKILL_CLUSTERS)) {\n  let hits = 0;\n  for (const t of terms) {\n    const regex = new RegExp('\\\\b' + t.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&') + '\\\\b', 'gi');\n    const matches = resumeLower.match(regex);\n    hits += matches ? matches.length : 0;\n  }\n  resumeClusterScores[cluster] = hits;\n}\n\n// Cosine similarity between JD and resume cluster vectors\nconst dotProduct = Object.keys(jdClusters).reduce((s, k) => s + (jdClusters[k]||0)*(resumeClusterScores[k]||0), 0);\nconst jdMag = Math.sqrt(Object.values(jdClusters).reduce((s,v)=>s+v*v,0));\nconst rMag  = Math.sqrt(Object.values(resumeClusterScores).reduce((s,v)=>s+v*v,0));\nconst cosineSimilarity = (jdMag && rMag) ? dotProduct/(jdMag*rMag) : 0;\n\n// Keyword overlap score (0-40)\nconst keywordHits = jdKeywords.filter(k => resumeLower.includes(k)).length;\nconst keywordScore = Math.round((keywordHits / Math.max(jdKeywords.length, 1)) * 40);\n\n// Skill cluster coverage score (0-30)\nconst coveredClusters = requiredClusters.filter(c => resumeClusterScores[c] > 0).length;\nconst clusterScore = Math.round((coveredClusters / Math.max(requiredClusters.length, 1)) * 30);\n\n// Resume quality score: impact verbs + metrics (0-15)\nconst IMPACT_VERBS = ['achieved','built','delivered','designed','developed','drove','enabled','engineered','grew','implemented','improved','increased','launched','led','managed','optimised','optimized','owned','reduced','scaled','shipped','transformed'];\nconst METRIC_PATTERN = /\\b\\d+[\\.\\d]*\\s*(%|x|k|m|cr|lakh|million|billion|users|customers|revenue|arr|nrr|nps|points|bps|hrs?|days?|weeks?)\\b/gi;\nconst verbHits = IMPACT_VERBS.filter(v => resumeLower.includes(v)).length;\nconst metricHits = (resumeText.match(METRIC_PATTERN)||[]).length;\nconst qualityScore = Math.min(15, verbHits * 1 + metricHits * 2);\n\n// Bias detection\nconst GENDERED = ['him','his','he ','she ','her ','himself','herself','manpower','manmade','chairman','stewardess','mankind'];\nconst BIAS_SIGNALS = ['dob','date of birth','nationality','religion','caste','marital','married','single','father','mother','age:','gender:','sex:','photo attached'];\nconst biasTokens = [...GENDERED, ...BIAS_SIGNALS].filter(t => resumeLower.includes(t));\nconst biasFlag = biasTokens.length > 0;\nconst biasNotes = biasFlag ? 'Detected: ' + biasTokens.slice(0,5).join(', ') : null;\n\n// Matched / missing clusters for reporting\nconst matchedClusters = requiredClusters.filter(c => resumeClusterScores[c] > 0);\nconst missingClusters = requiredClusters.filter(c => resumeClusterScores[c] === 0);\n\n// Rule-based total (no AI yet)\nconst ruleBasedTotal = keywordScore + clusterScore + qualityScore;\n\n// \u2500\u2500\u2500 LAYER 2: AI EXPLANATION PROMPT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Rule scores are pre-computed and passed to Claude. Claude ONLY explains\n// and adds nuanced signals (education fit, tenure, career trajectory).\n// It cannot change the core numeric scores \u2014 separation is enforced.\n\nconst systemPrompt = `You are a senior technical recruiter. You will receive:\n1. Pre-computed rule-based scores for a candidate\n2. The full job description\n3. The full resume text\n\nYour task: return a JSON object with ONLY explanatory and qualitative fields.\nYou MUST NOT change or override the numeric scores provided to you.\nReturn ONLY valid JSON \u2014 no markdown fences, no preamble.\n\nRequired JSON structure:\n{\n  \"candidate_name\": \"string \u2014 full name from resume header\",\n  \"email\": \"string or null\",\n  \"mobile\": \"string or null\",\n  \"education_score\": \"integer 0-15 \u2014 degree + field relevance + certs\",\n  \"tier_rationale\": \"string \u2014 2-3 sentences explaining fit tier\",\n  \"key_strengths\": [\"string\",\"string\",\"string\"],\n  \"key_gaps\": [\"string\",\"string\"],\n  \"career_trajectory\": \"string \u2014 one sentence: e.g. IC \u2192 lead, domain switcher, early-career\",\n  \"confidence\": \"float 0.0-1.0\",\n  \"language_detected\": \"string\"\n}\n\nRules:\n- NEVER invent contact info. Set to null if absent.\n- education_score: 0-15 only. Field relevance > institution prestige. Bootcamps/certs count.\n- Be specific in strengths/gaps \u2014 name actual tools or projects from the resume.`;\n\nconst userPrompt = `PRE-COMPUTED SCORES (do not override):\nKeyword Match Score: ${keywordScore}/40\nCluster Coverage Score: ${clusterScore}/30\nResume Quality Score: ${qualityScore}/15\nMatched Skill Clusters: ${matchedClusters.join(', ')||'none'}\nMissing Skill Clusters: ${missingClusters.join(', ')||'none'}\nCosine Similarity (JD vs Resume): ${cosineSimilarity.toFixed(3)}\n\nJD Required Clusters: ${requiredClusters.join(', ')||'general'}\n\nJOB DESCRIPTION:\n${jdText}\n\n${'\u2500'.repeat(60)}\n\nRESUME FILENAME: ${fileName}\nWORD COUNT: ${wordCount}\n\nRESUME TEXT:\n${resumeText.slice(0, 6000)}`;\n\nreturn [{ json: {\n  fileId: $json.fileId,\n  fileName,\n  wordCount,\n  // Rule-based scores (stable, deterministic)\n  keywordScore,\n  clusterScore,\n  qualityScore,\n  ruleBasedTotal,\n  cosineSimilarity: parseFloat(cosineSimilarity.toFixed(3)),\n  matchedClusters,\n  missingClusters,\n  resumeClusterScores,\n  biasFlag,\n  biasNotes,\n  // For AI call\n  systemPrompt,\n  userPrompt\n}}];\n"
+      },
+      "id": "e9a08da5-6dc1-40e1-ac09-722376b70d4a",
+      "name": "Build Prompt v2 (Rule + AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst geminiResp = $json;\nconst promptData = $('Build Prompt v2 (Rule + AI)').first().json;\n\n// Parse Groq response: choices[0].message.content\nconst choices = geminiResp.choices;\nif (!choices || !Array.isArray(choices) || choices.length === 0) {\n  return [{ json: { status: 'api_error', fileId: promptData.fileId, fileName: promptData.fileName, error: 'Empty Groq API response \u2014 no choices returned' }}];\n}\n\nconst rawText = (choices[0]?.message?.content) || '';\nconst cleaned = rawText.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```$/i,'').trim();\n\nlet parsed;\ntry { parsed = JSON.parse(cleaned); }\ncatch(e) {\n  return [{ json: { status: 'parse_error', fileId: promptData.fileId, fileName: promptData.fileName, error: e.message, rawText: rawText.slice(0,500) }}];\n}\n\n// Education score from AI (0-15)\nconst educationScore = Math.min(15, Math.max(0, parseInt(parsed.education_score)||0));\n\n// Assemble final composite score\n// Rule: keyword(40) + cluster(30) + quality(15) + AI education(15) = 100\nconst finalScore = promptData.keywordScore + promptData.clusterScore + promptData.qualityScore + educationScore;\n\nlet tier;\nif (finalScore >= 80) tier = 'Strong Fit';\nelse if (finalScore >= 60) tier = 'Good Fit';\nelse if (finalScore >= 40) tier = 'Partial Fit';\nelse tier = 'Poor Fit';\n\n// Contact validation\nconst emailRx = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/;\nconst phoneRx = /[\\+]?[(]?[0-9]{1,4}[)]?[\\-\\s.]?[(]?[0-9]{1,4}[)]?[\\-\\s.]?[0-9]{3,4}[\\-\\s.]?[0-9]{3,4}/;\nconst validEmail  = (parsed.email  && emailRx.test(parsed.email))  ? parsed.email.trim()  : null;\nconst validMobile = (parsed.mobile && phoneRx.test(parsed.mobile)) ? parsed.mobile.trim() : null;\n\nconst now = new Date().toISOString();\n\nreturn [{ json: {\n  status: 'scored',\n  timestamp: now,\n  fileId: promptData.fileId,\n  fileName: promptData.fileName,\n  candidateName:   parsed.candidate_name || 'Unknown',\n  email:           validEmail,\n  mobile:          validMobile,\n  // Composite\n  relevanceScore:  finalScore,\n  tier,\n  // Sub-scores\n  keywordScore:    promptData.keywordScore,\n  clusterScore:    promptData.clusterScore,\n  qualityScore:    promptData.qualityScore,\n  educationScore,\n  cosineSimilarity: promptData.cosineSimilarity,\n  scoreBreakdown: `Keywords: ${promptData.keywordScore}/40 | Clusters: ${promptData.clusterScore}/30 | Quality: ${promptData.qualityScore}/15 | Education: ${educationScore}/15`,\n  // Semantic\n  matchedClusters: (promptData.matchedClusters||[]).join(' | '),\n  missingClusters: (promptData.missingClusters||[]).join(' | '),\n  resumeClusterScores: JSON.stringify(promptData.resumeClusterScores||{}),\n  cosineSim: promptData.cosineSimilarity,\n  // AI explanations\n  tierRationale:   parsed.tier_rationale || '',\n  keyStrengths:    Array.isArray(parsed.key_strengths) ? parsed.key_strengths.join(' | ') : '',\n  keyGaps:         Array.isArray(parsed.key_gaps)      ? parsed.key_gaps.join(' | ')      : '',\n  careerTrajectory: parsed.career_trajectory || '',\n  confidence:      parsed.confidence || null,\n  languageDetected: parsed.language_detected || 'English',\n  // Bias\n  biasFlag:  promptData.biasFlag,\n  biasNotes: promptData.biasNotes,\n}}];\n"
+      },
+      "id": "dae9f117-88a9-4ef4-90ef-069f26421ddd",
+      "name": "Parse & Validate v2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Aggregate skill cluster frequencies across all scored resumes for dashboard\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.insightsClusters) staticData.insightsClusters = {};\n\nconst clusters = $json.resumeClusterScores ? JSON.parse($json.resumeClusterScores) : {};\nfor (const [k, v] of Object.entries(clusters)) {\n  staticData.insightsClusters[k] = (staticData.insightsClusters[k] || 0) + (v > 0 ? 1 : 0);\n}\n\n// Track tier distribution\nif (!staticData.tierCounts) staticData.tierCounts = {'Strong Fit':0,'Good Fit':0,'Partial Fit':0,'Poor Fit':0};\nstaticData.tierCounts[$json.tier] = (staticData.tierCounts[$json.tier] || 0) + 1;\n\nconst totalScored = Object.values(staticData.tierCounts).reduce((a,b)=>a+b, 0);\nconst avgScore = (staticData.runningScoreSum = (staticData.runningScoreSum||0) + $json.relevanceScore) / totalScored;\n\nreturn [{ json: {\n  insightsClusters: staticData.insightsClusters,\n  tierCounts: staticData.tierCounts,\n  totalScored,\n  avgScore: parseFloat(avgScore.toFixed(1)),\n  topCluster: Object.entries(staticData.insightsClusters).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'n/a',\n  // Pass through for next nodes\n  ...$json\n}}];\n"
+      },
+      "id": "28041103-e092-4c95-a0cf-bec6693dd009",
+      "name": "Hiring Insights Aggregator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        216
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Maintain a rolling top-5 leaderboard in static data\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.leaderboard) staticData.leaderboard = [];\n\nconst candidate = {\n  name:  $json.candidateName,\n  score: $json.relevanceScore,\n  tier:  $json.tier,\n  email: $json.email,\n  file:  $json.fileName,\n  strengths: $json.keyStrengths,\n  gaps:      $json.keyGaps,\n  cosine:    $json.cosineSimilarity,\n  ts:        $json.timestamp\n};\n\n// Upsert by file name\nconst idx = staticData.leaderboard.findIndex(c => c.file === candidate.file);\nif (idx >= 0) staticData.leaderboard[idx] = candidate;\nelse staticData.leaderboard.push(candidate);\n\n// Sort and cap at top 5\nstaticData.leaderboard.sort((a,b) => b.score - a.score);\nstaticData.leaderboard = staticData.leaderboard.slice(0, 5);\n\nconst top5 = staticData.leaderboard;\nconst leaderboardMD = top5.map((c,i) =>\n  `${i+1}. *${c.name}* \u2014 Score: ${c.score}/100 | ${c.tier}\\n   Strengths: ${c.strengths}\\n   File: ${c.file}`\n).join('\\n\\n');\n\n// Only trigger shortlist email if current candidate is in top 5\nconst inTop5 = top5.some(c => c.file === candidate.file);\n\nreturn [{ json: {\n  ...$json,\n  leaderboard: top5,\n  leaderboardMD,\n  inTop5,\n  shortlistHtml: `<h2>\ud83c\udfaf Current Top 5 Candidates</h2>\n<table border=\"1\" cellpadding=\"8\" style=\"border-collapse:collapse;font-family:sans-serif\">\n  <tr style=\"background:#1a1a2e;color:white\"><th>#</th><th>Name</th><th>Score</th><th>Tier</th><th>Cosine Sim</th><th>Strengths</th><th>File</th></tr>\n  ${top5.map((c,i) => `<tr><td>${i+1}</td><td>${c.name}</td><td><b>${c.score}</b></td><td>${c.tier}</td><td>${c.cosine}</td><td>${c.strengths}</td><td>${c.file}</td></tr>`).join('')}\n</table>`\n}}];\n"
+      },
+      "id": "0418e5f8-0f88-4751-9298-3f0e9e432ac1",
+      "name": "Top-5 Leaderboard Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.inTop5 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5c1062d-bd4f-4af9-872d-73ef1e543390",
+      "name": "IF: In Top 5?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        464,
+        168
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_EMAIL@gmail.com",
+        "subject": "=\ud83c\udfaf Top 5 Update \u2014 {{ $json.candidateName }} entered the shortlist",
+        "message": "={{ $json.shortlistHtml }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "f13d448d-7b78-49b9-82b7-a15c85cf4d06",
+      "name": "Gmail: Shortlist Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        688,
+        168
+      ],
+      "webhookId": "349437ac-1cbb-4d73-a11f-4ab26e1537d0",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "lLF5jxQgjQm3R393",
+          "name": "Gmail - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// When JD changes, clear all scores from Google Sheet so resumes get re-evaluated\n// This node queues a re-score by writing a flag to static data\nconst staticData = $getWorkflowStaticData('global');\nstaticData.jdChangedAt = new Date().toISOString();\nstaticData.requireRescore = true;\nstaticData.leaderboard = []; // Reset leaderboard\nstaticData.tierCounts = {};\nstaticData.insightsClusters = {};\nstaticData.runningScoreSum = 0;\n\nreturn [{ json: { \n  jdChangedAt: staticData.jdChangedAt,\n  message: 'JD updated \u2014 leaderboard and insights reset. All resumes will be re-scored on next trigger.'\n}}];\n"
+      },
+      "id": "0c6d6403-7b27-40f2-898d-dfe0d05e3a76",
+      "name": "JD Change \u2192 Reset + Re-score Flag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3792,
+        408
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "=1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Insights",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ new Date().toISOString() }}",
+            "Total Scored": "={{ $json.totalScored }}",
+            "Avg Score": "={{ $json.avgScore }}",
+            "Top Cluster": "={{ $json.topCluster }}",
+            "Tier Distribution": "={{ $json.tierCounts }}",
+            "Cluster Counts": "={{ $json.resumeClusterScores }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Scored",
+              "displayName": "Total Scored",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Avg Score",
+              "displayName": "Avg Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Top Cluster",
+              "displayName": "Top Cluster",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tier Distribution",
+              "displayName": "Tier Distribution",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cluster Counts",
+              "displayName": "Cluster Counts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7d785766-4dfc-4ec8-a71b-b554db08b8a6",
+      "name": "Write Insights to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        240,
+        360
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TlquvcD2o2GFmtbb",
+          "name": "Sheets - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// JD folder ID hardcoded \u2014 no variables needed\nconst JD_FOLDER_ID = '12Kpm63xPR6hhkOgUD3W2wZ9EDIkZWgyj';\nconst staticData = $getWorkflowStaticData('global');\nstaticData.jdFolderId = JD_FOLDER_ID;\nreturn [{ json: { jdFolderId: JD_FOLDER_ID } }];"
+      },
+      "id": "91772431-ccee-47b0-8616-a8e225b91d26",
+      "name": "Config: JD Folder ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4912,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "='12Kpm63xPR6hhkOgUD3W2wZ9EDIkZWgyj' in parents and trashed=false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,modifiedTime,mimeType)"
+            },
+            {
+              "name": "orderBy",
+              "value": "modifiedTime desc"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f5211abc-fd0e-46be-8374-b45c5d4b1c67",
+      "name": "Search JD Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4688,
+        240
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the first (most recently modified) file from the Drive search result\nconst files = $input.first().json.files || [];\nif (!files.length) throw new Error('JD folder is empty \u2014 upload a JD file first.');\nconst jd = files[0];\n// Store folder ID in static data on first run so the search URL above works\n// JD folder = sibling of Resumes folder, stored once here from static data\nreturn [{ json: { id: jd.id, name: jd.name, modifiedTime: jd.modifiedTime, mimeType: jd.mimeType } }];"
+      },
+      "id": "02f11fa8-e999-4767-82a9-260219083345",
+      "name": "Extract JD File Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4464,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Extract JD File Meta').first().json.id }}/copy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"name\": \"tmp_jd_extract\", \"mimeType\": \"application/vnd.google-apps.document\" }",
+        "options": {}
+      },
+      "id": "7f789796-15cb-4b56-a79a-a0069f64ab88",
+      "name": "Copy JD \u2192 Google Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3792,
+        120
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge temp doc ID with original file meta\nconst tempDocId = $input.first().json.id;  // from Copy JD \u2192 Google Doc\nconst origMeta  = $('Extract JD File Meta').first().json;\nreturn [{ json: { tempDocId, origId: origMeta.id, origName: origMeta.name, modifiedTime: origMeta.modifiedTime } }];"
+      },
+      "id": "629deb00-d807-40e2-b5d5-56ba78e70ebf",
+      "name": "Merge JD Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3568,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $json.tempDocId }}/export?mimeType=text%2Fplain",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "309fe88f-57a2-4e3d-876a-117bd5b380ee",
+      "name": "Export JD as Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3344,
+        120
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the plain text response and clean up temp doc async\n// The export response body IS the plain text\nconst text = $input.first().json.body || '';\nconst meta = $('Merge JD Meta').first().json;\n\n// Schedule temp doc deletion (fire-and-forget via static data flag)\nconst staticData = $getWorkflowStaticData('global');\nstaticData.pendingDeleteDocId = meta.tempDocId;\n\nreturn [{ json: { body: text, id: meta.origId, name: meta.origName, modifiedTime: meta.modifiedTime } }];"
+      },
+      "id": "93ba745b-1c81-4bbd-ad1b-5a882b7b0cab",
+      "name": "Read JD Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Watch Resumes Folder').first().json.id }}/copy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"name\": \"tmp_resume_extract\", \"mimeType\": \"application/vnd.google-apps.document\" }",
+        "options": {}
+      },
+      "id": "6b05b58b-e899-4a43-afce-0f7e920bd6b2",
+      "name": "Copy Resume \u2192 Google Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2448,
+        120
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $json.id }}/export?mimeType=text%2Fplain",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "5fde9e4a-3b75-42f8-9c99-6a1c4a0c83f2",
+      "name": "Export Resume as Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2224,
+        120
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract plain text and prepare for Validate Resume Text\n//const text = $input.first().json.body || '';\nconst text = $input.first().json.data || $input.first().json.body || '';\n// Store temp doc ID for deletion after scoring\nconst staticData = $getWorkflowStaticData('global');\nstaticData.pendingDeleteResumeDocId = $('Copy Resume \u2192 Google Doc').first().json.id;\nreturn [{ json: { body: text } }];"
+      },
+      "id": "ce30d3dc-e549-4d2b-925e-3fc4ece80e24",
+      "name": "Read Resume Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2000,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// getRows returns the matched row if File ID exists in sheet,\n// or passes through nothing if no match.\n// This guard ensures IF: New File? always receives exactly one item.\nconst items = $input.all();\nif (items.length === 0) {\n  // No row found \u2192 file is new \u2192 output empty File ID\n  return [{ json: { 'File ID': '' } }];\n}\n// Row found \u2192 already scored \u2192 pass it through\nreturn [{ json: items[0].json }];"
+      },
+      "id": "c13673d9-1068-4e4c-90f6-c5efa0e868dc",
+      "name": "Guard: Already Scored?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5360,
+        312
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Evaluations",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Email",
+              "lookupValue": "={{ $('Extract Form Response').first().json.candidateEmail }}"
+            }
+          ]
+        },
+        "options": {
+          "returnAllMatches": "returnFirstMatch"
+        }
+      },
+      "id": "2959a733-ce38-491f-83b3-cb70bfaca330",
+      "name": "Check: Duplicate Email?",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -6704,
+        432
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TlquvcD2o2GFmtbb",
+          "name": "Sheets - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst firstItem = items[0]?.json;\n\nif (!firstItem || !firstItem['Email'] || firstItem['Email'] === '') {\n  return [{ json: { isDuplicate: false } }];\n}\n\nreturn [{ json: { isDuplicate: true, existingScore: firstItem['Score'] || 'pending' } }];"
+      },
+      "id": "14dbf4fc-bdc3-48db-a6dc-dfff8fa5f573",
+      "name": "Guard: Duplicate Email?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6480,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_dup",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9d90ec9-e27b-41cd-9d45-4943a1317bce",
+      "name": "IF: Duplicate Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -6256,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Extract Form Response').first().json.candidateEmail }}",
+        "subject": "Resume Already Received",
+        "message": "=<p>Hi {{ $('Extract Form Response').first().json.candidateName }},</p>\n<p>We already have a resume on file for this email address. If you'd like to update your submission, please contact us directly.</p>\n<p>\u2014 Hiring Team</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "339853a6-e91c-45c5-bd30-0bdccff935ef",
+      "name": "Send Notice: Duplicate Submission",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        -6032,
+        432
+      ],
+      "webhookId": "c4cc5951-eeeb-469d-ad9e-50b0752249a0",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "lLF5jxQgjQm3R393",
+          "name": "Gmail - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Bridge: align Google Form response data with the pipeline's expected shape.\n// The pipeline downstream references these fields.\nconst copied   = $input.first().json;                                  // Copy Resume to Resumes Folder output\nconst meta     = $('Extract Form Response').first().json;   // candidate metadata\n\nreturn [{ json: {\n  id:              copied.id,      // new file ID in Resumes folder\n  name:            copied.name,\n  fileId:          copied.id,\n  fileName:        copied.name,\n  candidateName:   meta.candidateName,\n  candidateEmail:  meta.candidateEmail,\n  candidateMobile: meta.candidateMobile,\n  yearsOfExp:      meta.yearsOfExp,\n  currentRole:     meta.currentRole,\n  linkedin:        meta.linkedin,\n  submittedAt:     meta.submittedAt,\n  fromForm:        true\n}}];\n"
+      },
+      "id": "e663157e-5426-497f-abb4-969b867ee4f4",
+      "name": "Normalise Form \u2192 Pipeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5808,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Extract Form Response').first().json.candidateEmail }}",
+        "subject": "\u2705 Resume Received \u2014 We'll be in touch",
+        "message": "=<p>Hi {{ $('Extract Form Response').first().json.candidateName }},</p>\n<p>Thank you for applying! We've received your resume and it's currently being reviewed by our automated screening system.</p>\n<p>You'll hear from us if your profile is a strong match for the role.</p>\n<br/>\n<p style=\"color:#666;font-size:12px;\">This is an automated message. Please do not reply.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "8d6b56ec-c514-4560-8113-349a87cf7eb7",
+      "name": "Send Ack: Submission Received",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        -5808,
+        192
+      ],
+      "webhookId": "1a1997ed-28cd-4cdc-9a97-f41e16aab9d6",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "lLF5jxQgjQm3R393",
+          "name": "Gmail - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "1x3Zu3VOqscnUINXjJJvj5SjoIe7oF1hOIkjUB4f-QDY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Form responses 1",
+          "mode": "name"
+        },
+        "event": "rowAdded",
+        "options": {}
+      },
+      "id": "0456b1dc-99b4-4e3b-9fd0-8152b55b7a03",
+      "name": "Google Form: New Response",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        -7376,
+        552
+      ],
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "Gv53eEisSANY7MBy",
+          "name": "Google Sheets Trigger account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// \u2500\u2500 Column names must match your Google Form questions exactly \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Adjust the keys below if your form questions are worded differently.\nconst row = $input.first().json;\nconst fullName    = (row['Full Name']              || '').trim();\nconst email       = (row['Email Address']          || '').trim().toLowerCase();\n//const mobile      = (row['Mobile Number']          || '').trim();\nconst mobile = String(row['Mobile Number'] ?? '').trim();\nconst yoe         = parseInt(row['Years of Experience']) || 0;\nconst currentRole = (row['Current Role / Title']   || '').trim();\nconst linkedin    = (row['LinkedIn Profile URL']   || '').trim();\n// Google Forms file upload gives a full Drive URL like:\n// https://drive.google.com/open?id=FILE_ID\nconst fileUrl     = (row['Upload your resume (.pdf only)'] || '').trim();\n\n// \u2500\u2500 Validation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst errors = [];\nif (!fullName || fullName.length < 2)\n  errors.push('Full Name missing or too short.');\nconst emailRx = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!email || !emailRx.test(email))\n  errors.push('Invalid email address.');\nif (!fileUrl)\n  errors.push('No resume file attached.');\n\n// \u2500\u2500 Extract Drive file ID from the URL \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nlet driveFileId = '';\nconst idMatch = fileUrl.match(/[?&/]id=([a-zA-Z0-9_-]+)/) ||\n                fileUrl.match(/\\/d\\/([a-zA-Z0-9_-]+)/);\nif (idMatch) driveFileId = idMatch[1];\nelse if (fileUrl) errors.push('Could not parse Drive file ID from resume URL.');\n\nif (errors.length > 0) {\n  return [{ json: {\n    valid: false, errors,\n    candidateName: fullName,\n    candidateEmail: email\n  }}];\n}\n\n// \u2500\u2500 Sanitise filename for Drive copy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst safe = fullName.replace(/[^a-zA-Z0-9 _-]/g,'').replace(/\\s+/g,'_');\nconst ts   = new Date().toISOString().replace(/[:.]/g,'-');\nconst driveFileName = `Resume_${safe}_${ts}.pdf`;\n\nreturn [{ json: {\n  valid: true,\n  errors: [],\n  driveFileId,\n  driveFileName,\n  candidateName:   fullName,\n  candidateEmail:  email,\n  candidateMobile: mobile,\n  yearsOfExp:      yoe,\n  currentRole,\n  linkedin,\n  submittedAt: row['Timestamp'] || new Date().toISOString()\n}}];\n"
+      },
+      "id": "80d4a900-5784-4ea4-91f8-e801deb901ca",
+      "name": "Extract Form Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7152,
+        552
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0670101-e23a-4952-ab99-f9679b54b92d",
+      "name": "IF: Response Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -6928,
+        552
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "AuditLog",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ new Date().toISOString() }}",
+            "File ID": "=n/a",
+            "File Name": "=n/a",
+            "Status": "=INVALID_SUBMISSION",
+            "Score": "=0",
+            "Notes": "={{ $json.errors.join(' | ') }} | Email: {{ $json.candidateEmail }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "83cb9fd4-19a0-438f-becb-e52707023df4",
+      "name": "Log Invalid Submission",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        -6704,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TlquvcD2o2GFmtbb",
+          "name": "Sheets - Resume Scorer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Extract Form Response').first().json.driveFileId }}/copy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"name\": \"{{ $('Extract Form Response').first().json.driveFileName }}\", \"parents\": [\"1qEyNJsCTjqfjWkCo-BePaJFe5mnIUcft\"] }",
+        "options": {}
+      },
+      "id": "7ee314d9-3c31-4fb0-93cb-6ab186b5779d",
+      "name": "Copy Resume to Resumes Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6032,
+        240
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "V4CI4AGP1joRyjTy",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{ json: {\n  cachedJdModifiedTime: staticData.cachedJdModifiedTime || null\n}}];"
+      },
+      "id": "b4b8813a-2934-4f9c-a187-9f245c6f5c76",
+      "name": "Read JD Cache Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.systemPrompt + \"\\n\\n\" + $json.userPrompt) }}\n    }\n  ],\n  \"temperature\": 0.2,\n  \"max_tokens\": 1500\n}",
+        "options": {
+          "response": {
+            "response": {}
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "b91d99fc-0347-4610-a167-71b9aef9007b",
+      "name": "Groq \u2014 Score Resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -656,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "=1cgDOvviJdZbBGyX7LrIEBv3pPeaeY8qXEaEPbnxtVJg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Evaluations",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "File ID": "={{ $json.fileId }}",
+            "Timestamp": "={{ $json.timestamp }}",
+            "Candidate Name": "={{ $json.candidateName }}",
+            "Email": "={{ $json.email }}",
+            "Mobile": "={{ $json.mobile }}",
+            "Score": "={{ $json.relevanceScore }}",
+            "Tier": "={{ $json.tier }}",
+            "Keyword Score": "={{ $json.keywordScore }}",
+            "Cluster Score": "={{ $json.clusterScore }}",
+            "Quality Score": "={{ $json.qualityScore }}",
+            "Education Score": "={{ $json.educationScore }}",
+            "Cosine Similarity": "={{ $json.cosineSimilarity }}",
+            "Key Strengths": "={{ $json.keyStrengths }}",
+            "Key Gaps": "={{ $json.keyGaps }}",
+            "Confidence": "={{ $json.confidence }}",
+            "File Name": "={{ $json.fileName }}"
+          },
+          "matchingColumns": [
+            "File ID"
+          ],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Candidate Name",
+              "displayName": "Candidate Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Mobile",
+              "displayName": "Mobile",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Tier",
+              "displayName": "Tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Keyword Score",
+              "displayName": "Keyword Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cluster Score",
+              "displayName": "Cluster Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Quality Score",
+              "displayName": "Quality Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Education Score",
+              "displayName": "Education Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Cosine Similarity",
+              "displayName": "Cosine Similarity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Key Strengths",
+              "displayName": "Key Strengths",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Key Gaps",
+              "displayName": "Key Gaps",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Confidence",
+              "displayName": "Confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "File ID",
+              "displayName": "File ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "File Name",
+              "displayName": "File Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7178ff5a-b9bc-446a-83d0-a31b77a32fe4",
+      "name": "Insert to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        16,
+        24
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "TlquvcD2o2GFmtbb",
+          "name": "Sheets - Resume Scorer"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule: Refresh JD Cache": {
+      "main": [
+        [
+          {
+            "node": "Config: JD Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check: Already Scored?": {
+      "main": [
+        [
+          {
+            "node": "Guard: Already Scored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: New File?": {
+      "main": [
+        [
+          {
+            "node": "Config: JD Folder ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (Already Scored)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: JD Changed?": {
+      "main": [
+        [
+          {
+            "node": "Copy JD \u2192 Google Doc",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "JD Change \u2192 Reset + Re-score Flag",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Copy Resume \u2192 Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache JD Text": {
+      "main": [
+        [
+          {
+            "node": "Embed JD \u2014 Skill Clusters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Resume Text": {
+      "main": [
+        [
+          {
+            "node": "IF: Text Extractable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Text Extractable?": {
+      "main": [
+        [
+          {
+            "node": "Rate Limiter (5/min)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag Error Row in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limiter (5/min)": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt v2 (Rule + AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2s (API Courtesy)": {
+      "main": [
+        [
+          {
+            "node": "Groq \u2014 Score Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Scored Successfully?": {
+      "main": [
+        [
+          {
+            "node": "Insert to Google Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Hiring Insights Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag Error Row in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Error Row in Sheet": {
+      "main": [
+        [
+          {
+            "node": "Write to Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed JD \u2014 Skill Clusters": {
+      "main": [
+        [
+          {
+            "node": "Copy Resume \u2192 Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt v2 (Rule + AI)": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s (API Courtesy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate v2": {
+      "main": [
+        [
+          {
+            "node": "IF: Scored Successfully?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hiring Insights Aggregator": {
+      "main": [
+        [
+          {
+            "node": "Write Insights to Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Top-5 Leaderboard Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top-5 Leaderboard Builder": {
+      "main": [
+        [
+          {
+            "node": "IF: In Top 5?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: In Top 5?": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Shortlist Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Stop and Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config: JD Folder ID": {
+      "main": [
+        [
+          {
+            "node": "Search JD Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search JD Folder": {
+      "main": [
+        [
+          {
+            "node": "Extract JD File Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract JD File Meta": {
+      "main": [
+        [
+          {
+            "node": "Read JD Cache Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Copy JD \u2192 Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Merge JD Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge JD Meta": {
+      "main": [
+        [
+          {
+            "node": "Export JD as Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export JD as Text": {
+      "main": [
+        [
+          {
+            "node": "Read JD Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read JD Text": {
+      "main": [
+        [
+          {
+            "node": "Cache JD Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Copy Resume \u2192 Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Export Resume as Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export Resume as Text": {
+      "main": [
+        [
+          {
+            "node": "Read Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Resume Text": {
+      "main": [
+        [
+          {
+            "node": "Validate Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard: Already Scored?": {
+      "main": [
+        [
+          {
+            "node": "IF: New File?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check: Duplicate Email?": {
+      "main": [
+        [
+          {
+            "node": "Guard: Duplicate Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard: Duplicate Email?": {
+      "main": [
+        [
+          {
+            "node": "IF: Duplicate Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Duplicate Email?": {
+      "main": [
+        [
+          {
+            "node": "Send Notice: Duplicate Submission",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Copy Resume to Resumes Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Form \u2192 Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Check: Already Scored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Form: New Response": {
+      "main": [
+        [
+          {
+            "node": "Extract Form Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Form Response": {
+      "main": [
+        [
+          {
+            "node": "IF: Response Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Response Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check: Duplicate Email?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Invalid Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Copy Resume to Resumes Folder": {
+      "main": [
+        [
+          {
+            "node": "Normalise Form \u2192 Pipeline",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Ack: Submission Received",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check: Already Scored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read JD Cache Meta": {
+      "main": [
+        [
+          {
+            "node": "IF: JD Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq \u2014 Score Resume": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate v2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7c7e6ee3-0c90-40c7-99ec-60a5c7254d84",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4ce7153f996e926aaf17399df04d18ee5e508ca2d619b5fe793d02dcd6b11b69"
+  },
+  "id": "gfzHchPSwMIqSjaw",
+  "tags": []
+}
