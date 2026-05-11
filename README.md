@@ -1,6 +1,6 @@
-# 🧠 AI Resume Scorer — Automated Hiring Pipeline
+# AI Resume Scorer - Automated Hiring Pipeline
 
-An n8n workflow that automatically scores resumes against a job description using skill-cluster embeddings and AI evaluation. Accepts submissions via Google Form or direct Google Drive upload, deduplicates candidates, validates text extraction, generates a composite 100-point score, maintains a live top-5 leaderboard, and emails shortlisted candidates — all with full audit logging to Google Sheets.
+An n8n workflow that automatically scores resumes against a job description using skill-cluster embeddings and AI evaluation. Accepts submissions via Google Form or direct Google Drive upload, deduplicates candidates, validates text extraction, generates a composite 100-point score, maintains a live top-5 leaderboard, and emails shortlisted candidates, all with full audit logging to Google Sheets.
 
 ---
 
